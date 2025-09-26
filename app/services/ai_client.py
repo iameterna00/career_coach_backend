@@ -13,14 +13,11 @@ if not OPENAI_API_KEY:
 if not DEESEEK_API_KEY:
     raise RuntimeError("DEESEEK_API not set in .env")
 
-
-def generate_deepseek_reply(prompt: str) -> str:
+def generate_deepseek_reply(messages: list) -> str:
     headers = {"Authorization": f"Bearer {DEESEEK_API_KEY}"}
     payload = {
         "model": "deepseek-chat",
-        "messages": [
-            {"role": "system", "content": prompt}
-        ]
+        "messages": messages
     }
     try:
         response = httpx.post(
@@ -38,21 +35,20 @@ def generate_deepseek_reply(prompt: str) -> str:
         return f"⚠️ DeepSeek API error: {e.response.text}"
 
 
-def generate_chatgpt_reply(prompt: str) -> str:
+def generate_chatgpt_reply(messages: list) -> str:
+    """
+    messages: List of {"role": "...", "content": "..."} dicts
+    """
     headers = {
         "Authorization": f"Bearer {OPENAI_API_KEY}",
         "Content-Type": "application/json"
     }
     payload = {
         "model": "gpt-5",
-        "messages": [
-            {"role": "user", "content": prompt},
-            
-        ]
+        "messages": messages
     }
     try:
         response = httpx.post(
-
             f"{OPENAI_BASE_URL}/chat/completions",
             json=payload,
             headers=headers,
