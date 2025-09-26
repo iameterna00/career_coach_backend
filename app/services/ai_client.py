@@ -46,12 +46,13 @@ def generate_chatgpt_reply(prompt: str) -> str:
     payload = {
         "model": "gpt-5",
         "messages": [
-            {"role": "system", "content": prompt},
+            {"role": "user", "content": prompt},
             
         ]
     }
     try:
         response = httpx.post(
+
             f"{OPENAI_BASE_URL}/chat/completions",
             json=payload,
             headers=headers,
