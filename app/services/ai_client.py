@@ -29,7 +29,7 @@ client = OpenAI(api_key=OPENAI_API_KEY)
 functions = [
     {
         "name": "close_chat",
-        "description": "Closes the chat session when all the questions are asked and got answers or fields are completed",
+        "description": "Closes the chat when use say he is bba student",
         "parameters": {
             "type": "object",
             "properties": {
@@ -71,21 +71,30 @@ def generate_deepseek_stream(messages: list):
     payload = {"model": "deepseek-chat", "messages": messages, "stream": True, "temperature": 0.7}
 
     try:
-        with httpx.Client(timeout=60.0) as client:
-            response = client.post(f"{DEESEEK_BASE_URL}/chat/completions", json=payload, headers=headers)
+        with httpx.stream(
+            "POST",
+            f"{DEESEEK_BASE_URL}/chat/completions",
+            json=payload,
+            headers=headers,
+            timeout=None
+        ) as response:
             response.raise_for_status()
+
             for line in response.iter_lines():
-                if line.startswith(b"data: "):
-                    data = line[6:].decode("utf-8")
-                    if data == "[DONE]":
+                if not line:
+                    continue
+                if line.startswith("data: "):  # <-- FIX HERE
+                    data = line[6:]
+                    if data.strip() == "[DONE]":
                         break
                     try:
                         json_data = json.loads(data)
                         delta = json_data["choices"][0].get("delta", {})
                         if "content" in delta:
                             yield delta["content"]
-                    except:
+                    except Exception:
                         continue
+
     except Exception as e:
         yield f"⚠️ DeepSeek streaming error: {str(e)}"
 
@@ -122,10 +131,10 @@ def generate_chatgpt_reply(messages: list) -> str:
 def generate_chatgpt_stream(messages: list):
     try:
         stream = client.chat.completions.create(
-            model="gpt-4.1",
+            model="gpt-5",
             messages=messages,
             stream=True,
-            temperature=1,
+       
             functions=functions,
             function_call="auto"
         )

@@ -307,11 +307,10 @@ def chat_stream():
             json_filter = JSONFilterState()
 
             for chunk in stream_generator:
-                print("DEBUG: chunk received:", chunk)
-                print("DEBUG: chunk type:", type(chunk))
 
                 chunk_str = str(chunk)
                 full_response += chunk_str
+                print(chunk_str, end="", flush=True)
 
                 # Check if this is a close_chat response (as string)
                 if "'close_chat': True" in chunk_str or '"close_chat": true' in chunk_str:
@@ -322,7 +321,6 @@ def chat_stream():
                         
                         if isinstance(chunk_dict, dict) and chunk_dict.get("close_chat"):
                             message_content = chunk_dict.get('message', '')
-                            print("DEBUG: Close chat triggered! Message:", message_content)
                             
                             # Save only the message content to conversation
                             conversations[conv_key].append({
@@ -342,7 +340,6 @@ def chat_stream():
                             return  # stop streaming immediately
                             
                     except (SyntaxError, ValueError, Exception) as e:
-                        print("DEBUG: Failed to parse close_chat as dict, treating as normal text:", e)
                         # Continue with normal text processing
                         pass
 
@@ -362,8 +359,7 @@ def chat_stream():
                         message_match = re.search(r"'message':\s*'([^']*)'", full_response)
                         if message_match:
                             message_content = message_match.group(1)
-                            print("DEBUG: Close chat detected in full response, saving message:", message_content)
-                            
+                           
                             # Save only the message content
                             conversations[conv_key].append({"role": "assistant", "content": message_content})
                             save_conversations_to_file()
@@ -380,7 +376,6 @@ def chat_stream():
                             conversations[conv_key].append({"role": "assistant", "content": full_response})
                             save_conversations_to_file()
                     except Exception as e:
-                        print("DEBUG: Error extracting close_chat message:", e)
                         conversations[conv_key].append({"role": "assistant", "content": full_response})
                         save_conversations_to_file()
                 else:
