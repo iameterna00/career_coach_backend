@@ -145,7 +145,7 @@ def chat():
             if model == "deepseek":
                 welcome_msg = generate_deepseek_reply(conversations[conv_key])
             else:
-                welcome_msg = generate_chatgpt_reply(conversations[conv_key])
+                welcome_msg = generate_deepseek_reply(conversations[conv_key])
 
             # Check if it's a close_chat response (dict)
             if isinstance(welcome_msg, dict) and welcome_msg.get("close_chat"):
@@ -218,7 +218,7 @@ def chat():
     return jsonify({"reply": ""})
  
 
-@bot_bp.route("/carrerbot-stream", methods=["GET"])
+@bot_bp.route("/careerbot-stream", methods=["GET"])
 def chat_stream():
     user_id = request.args.get("user_id")
     message = request.args.get("message", "").strip()

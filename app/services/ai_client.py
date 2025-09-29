@@ -29,11 +29,11 @@ client = OpenAI(api_key=OPENAI_API_KEY)
 functions = [
     {
         "name": "close_chat",
-        "description": "Closes the chat when use say he is bba student",
+        "description": "Close the chat once all fields are filled or the user has answered all questions.",
         "parameters": {
             "type": "object",
             "properties": {
-                "end_conversation": {"type": "string", "description": "End with a polite message"}
+                "end_conversation": {"type": "string", "description": "End with a polite message and provide an overall strengths integration for user, which will be the core foundation for generating their Career Planning Report"}
             },
             "required": ["end_conversation"]
         }
@@ -56,44 +56,70 @@ def handle_close_chat(reason: str) -> dict:
 # -------------------
 def generate_deepseek_reply(messages: list) -> str:
     headers = {"Authorization": f"Bearer {DEESEEK_API_KEY}"}
-    payload = {"model": "deepseek-chat", "messages": messages}
+    payload = {
+        "model": "deepseek-chat",
+        "messages": messages,
+        "functions": functions,      # reuse the OpenAI functions
+        "function_call": "auto"
+    }
 
     try:
         response = httpx.post(f"{DEESEEK_BASE_URL}/chat/completions", json=payload, headers=headers, timeout=60.0)
         response.raise_for_status()
         data = response.json()
-        return data["choices"][0]["message"]["content"].strip()
+        choice = data["choices"][0]["message"]
+
+        # Normal content
+        if "content" in choice and choice["content"]:
+            return choice["content"].strip()
+
+        # Function call (reuse OpenAI handler)
+        if "function_call" in choice:
+            fn_name = choice["function_call"]["name"]
+            fn_args = json.loads(choice["function_call"]["arguments"])
+            if fn_name == "close_chat":
+                return handle_close_chat(fn_args["end_conversation"])
+
+        return "⚠️ No usable DeepSeek response"
+
     except Exception as e:
         return f"⚠️ DeepSeek API error: {str(e)}"
-
 def generate_deepseek_stream(messages: list):
     headers = {"Authorization": f"Bearer {DEESEEK_API_KEY}"}
-    payload = {"model": "deepseek-chat", "messages": messages, "stream": True, "temperature": 0.7}
+    payload = {
+        "model": "deepseek-chat",
+        "messages": messages,
+        "stream": True,
+        "functions": functions,
+        "function_call": "auto",
+        "temperature": 0.7
+    }
+
+    collected_function = {"name": None, "arguments": ""}
 
     try:
-        with httpx.stream(
-            "POST",
-            f"{DEESEEK_BASE_URL}/chat/completions",
-            json=payload,
-            headers=headers,
-            timeout=None
-        ) as response:
+        with httpx.stream("POST", f"{DEESEEK_BASE_URL}/chat/completions", json=payload, headers=headers, timeout=None) as response:
             response.raise_for_status()
-
             for line in response.iter_lines():
-                if not line:
+                if not line or not line.startswith("data: "):
                     continue
-                if line.startswith("data: "):  # <-- FIX HERE
-                    data = line[6:]
-                    if data.strip() == "[DONE]":
-                        break
-                    try:
-                        json_data = json.loads(data)
-                        delta = json_data["choices"][0].get("delta", {})
-                        if "content" in delta:
-                            yield delta["content"]
-                    except Exception:
-                        continue
+                data = line[6:]
+                if data.strip() == "[DONE]":
+                    break
+                json_data = json.loads(data)
+                delta = json_data["choices"][0].get("delta", {})
+                if "content" in delta:
+                    yield delta["content"]
+                if "function_call" in delta:
+                    if delta["function_call"].get("name"):
+                        collected_function["name"] = delta["function_call"]["name"]
+                    if delta["function_call"].get("arguments"):
+                        collected_function["arguments"] += delta["function_call"]["arguments"]
+
+        # Handle final function call
+        if collected_function["name"] == "close_chat":
+            args = json.loads(collected_function["arguments"])
+            yield f"\n{handle_close_chat(args['end_conversation'])}\n"
 
     except Exception as e:
         yield f"⚠️ DeepSeek streaming error: {str(e)}"
