@@ -6,7 +6,7 @@ from typing import List, Optional
 from dataclasses import dataclass, field as dc_field
 from app.services.file_store import setups_by_user, save_setups, leads, save_leads, page_to_setup_map, clear_leads
 from app.services.context_builder import build_context
-from app.services.ai_client import generate_deepseek_reply, generate_chatgpt_reply, generate_deepseek_stream, generate_chatgpt_stream
+from app.services.ai_client import generate_deepseek_stream, generate_chatgpt_stream
 from app.services.parser import parse_booking_confirmation
 
 bot_bp = Blueprint("bot", __name__)
@@ -58,6 +58,15 @@ def is_chat_closed(user_id, page_id):
 if os.path.exists(CONVERSATIONS_FILE):
     with open(CONVERSATIONS_FILE, "r", encoding="utf-8") as f:
         conversations.update(json.load(f))
+
+
+def clear_chat_status_file():
+    """Clear the chat status file"""
+    if os.path.exists(CHAT_STATUS_FILE):
+        with open(CHAT_STATUS_FILE, "w", encoding="utf-8") as f:
+            f.write("{}")
+    print("[INFO] chat_status.json cleared")
+
 
 @bot_bp.route("/clear-conversations", methods=["POST"])
 def clear_conversations():

@@ -3,7 +3,7 @@ from flask import Flask
 from flask_cors import CORS
 from dotenv import load_dotenv
 
-load_dotenv()  
+load_dotenv()
 
 def create_app():
     app = Flask(__name__)
@@ -14,15 +14,14 @@ def create_app():
         "https://nepwoop.com"
     ], supports_credentials=True)
 
-    # Register blueprints
     from app.routes.bot_routes import bot_bp
     app.register_blueprint(bot_bp, url_prefix="/api")
 
-    # Clear conversations.json on startup
     from app.routes import bot_routes
+    bot_routes.clear_chat_status_file()
     bot_routes.clear_conversations_file()
+ 
 
-    # Health check
     @app.route("/")
     def health_check():
         return {"message": "Backend is running!"}
@@ -31,5 +30,4 @@ def create_app():
 
 if __name__ == "__main__":
     app = create_app()
-    # Run on port 8000
     app.run(debug=True, port=8000)
