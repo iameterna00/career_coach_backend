@@ -3,6 +3,8 @@ import httpx
 import json
 from dotenv import load_dotenv
 from openai import OpenAI
+import re
+
 
 # Load .env file
 load_dotenv()
@@ -42,14 +44,34 @@ functions = [
 
 def handle_close_chat(reason: str) -> dict:
     print(f"❌ Chat closed: {reason}")
-    # Return a special payload for frontend
+    
+    # Remove JSON parts from the message content
+    def remove_json_from_content(text):
+        if not text:
+            return text
+            
+        pattern = re.compile(r"<<JSON>>(.*?)<<ENDJSON>>", re.DOTALL)
+        
+        cleaned_text = text
+        for match in pattern.finditer(text):
+            json_content = match.group(0)  # Get the entire JSON block including markers
+            cleaned_text = cleaned_text.replace(json_content, "")
+        
+        # Clean up any extra whitespace
+        cleaned_text = re.sub(r'\n\s*\n', '\n\n', cleaned_text) 
+        cleaned_text = cleaned_text.strip()
+        
+        return cleaned_text
+    
+    # Clean the reason message to remove JSON
+    cleaned_message = remove_json_from_content(reason)
+    
     return {
         "function": "close_chat",
-        "message":reason,
-        "block_typing": True ,
+        "message": cleaned_message,
+        "block_typing": True,
         "close_chat": True
     }
-
 
 # -------------------
 # DeepSeek Functions

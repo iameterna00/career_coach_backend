@@ -13,6 +13,7 @@ bot_bp = Blueprint("bot", __name__)
 conversations = {}
 blocked_users = {}
 CONVERSATIONS_FILE = "conversations.json"
+CHAT_STATUS_FILE = "chat_status.json"
 
 def clear_conversations_file():
     global conversations
@@ -22,79 +23,50 @@ def clear_conversations_file():
             f.write("{}")
     print("[INFO] conversations.json cleared on server start")
 
-
-
 def save_conversations_to_file():
     with open(CONVERSATIONS_FILE, "w", encoding="utf-8") as f:
         json.dump(conversations, f, indent=2, ensure_ascii=False)
 
+def load_chat_status():
+    """Load chat status from file"""
+    if os.path.exists(CHAT_STATUS_FILE):
+        with open(CHAT_STATUS_FILE, "r", encoding="utf-8") as f:
+            return json.load(f)
+    return {}
+
+def save_chat_status(chat_status):
+    """Save chat status to file"""
+    with open(CHAT_STATUS_FILE, "w", encoding="utf-8") as f:
+        json.dump(chat_status, f, indent=2, ensure_ascii=False)
+
+def set_chat_closed(user_id, page_id, closed=True):
+    """Set chat closed status for a user"""
+    chat_status = load_chat_status()
+    conv_key = f"{page_id}_{user_id}"
+    if closed:
+        chat_status[conv_key] = {"closed": True, "closed_at": str(os.path.getmtime(CONVERSATIONS_FILE))}
+    else:
+        chat_status.pop(conv_key, None)
+    save_chat_status(chat_status)
+
+def is_chat_closed(user_id, page_id):
+    """Check if chat is closed for a user"""
+    chat_status = load_chat_status()
+    conv_key = f"{page_id}_{user_id}"
+    return chat_status.get(conv_key, {}).get("closed", False)
+
 if os.path.exists(CONVERSATIONS_FILE):
     with open(CONVERSATIONS_FILE, "r", encoding="utf-8") as f:
         conversations.update(json.load(f))
-
-@dataclass
-class Service:
-    name: Optional[str] = ""
-    price: Optional[str] = "0"
-    negotiable: Optional[str] = "0"
-
-@dataclass
-class SetupModel:
-    page_id: str
-    user_id: str
-    platform: Optional[str] = None
-    business_name: Optional[str] = ""
-    business_address: Optional[str] = ""
-    offerings: Optional[str] = ""
-    business_hours: Optional[str] = ""
-    goalType: Optional[str] = ""
-    field: List[str] = dc_field(default_factory=list)
-    toneAndVibe: Optional[List[str]] = dc_field(default_factory=list)
-    additionalPrompt: Optional[str] = ""
-    followUps: Optional[str] = ""
-    agent_name: Optional[str] = ""
-    services: List[Service] = dc_field(default_factory=list)
-
-@dataclass
-class ChatRequest:
-    user_id: str
-    message: str
-    page_id: str
-    model: Optional[str] = "chatgpt"
-    modelConfig: Optional[dict] = None
-
-
-@bot_bp.route("/setup", methods=["POST"])
-def save_setup():
-    data = request.json
-    setup = SetupModel(**data)
-    user_id = setup.user_id
-
-    setups_by_user[user_id] = data
-    page_to_setup_map[setup.page_id] = data
-    save_setups()
-
-    keys_to_delete = [k for k in conversations if k.startswith(setup.page_id)]
-    for k in keys_to_delete:
-        del conversations[k]
-
-    save_conversations_to_file()
-    return jsonify({"status": "ok", "message": "Setup saved"})
-
-@bot_bp.route("/setup/<user_id>", methods=["GET"])
-def get_setup_for_user(user_id):
-    user_data = setups_by_user.get(user_id)
-    if not user_data:
-        return jsonify({"error": "User data not found"}), 404
-    return jsonify(user_data)
 
 @bot_bp.route("/clear-conversations", methods=["POST"])
 def clear_conversations():
     global conversations
     conversations = {}
     save_conversations_to_file()
+    save_chat_status({})
+    
     return jsonify({"status": "ok", "message": "All conversations cleared"})
-
 
 @bot_bp.route("/leads", methods=["GET"])
 def get_all_leads():
@@ -107,116 +79,57 @@ def clear_leads_endpoint():
         return jsonify({"status": "ok", "message": "All leads cleared"})
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)}), 500
+
+@bot_bp.route("/conversation-history", methods=["GET"])
+def get_conversation_history():
+    user_id = request.args.get("user_id")
+    page_id = request.args.get("page_id")
+    
+    if not all([user_id, page_id]):
+        return jsonify({"error": "Missing user_id or page_id"}), 400
+    
+    conv_key = f"{page_id}_{user_id}"
+
+    if os.path.exists(CONVERSATIONS_FILE):
+        with open(CONVERSATIONS_FILE, "r", encoding="utf-8") as f:
+            current_conversations = json.load(f)
+    else:
+        current_conversations = {}
+    conversation = current_conversations.get(conv_key, [])
+    
+    def remove_json_from_content(text):
+        if not text:
+            return text
+            
+        pattern = re.compile(r"<<JSON>>(.*?)<<ENDJSON>>", re.DOTALL)
+        
+        cleaned_text = text
+        for match in pattern.finditer(text):
+            json_content = match.group(0)  
+            cleaned_text = cleaned_text.replace(json_content, "")
+        
+        cleaned_text = re.sub(r'\n\s*\n', '\n\n', cleaned_text) 
+        cleaned_text = cleaned_text.strip()
+        
+        return cleaned_text
+    
+    filtered_messages = [
+        {
+            "role": msg["role"],
+            "content": remove_json_from_content(msg["content"])
+        }
+        for msg in conversation 
+        if msg["role"] in ["user", "assistant"]
+    ]
     
 
-@bot_bp.route("/carrerbot", methods=["POST"])
-def chat():
-    data = request.json
-    request_obj = ChatRequest(
-        user_id=data.get("user_id"),
-        message=data.get("message", ""),
-        page_id=data.get("page_id"),
-        model=data.get("model", "chatgpt"),
-        modelConfig=data.get("modelConfig")
-    )
-
-    page_id = request_obj.page_id
-    sender_id = request_obj.user_id
-    model = request_obj.model.lower() if request_obj.model else "chatgpt"
-    user_message = request_obj.message.strip()
-
-    setup = page_to_setup_map.get(page_id)
-    if not setup:
-        return jsonify({"reply": "Please complete your business setup first."})
-
-    conv_key = f"{page_id}_{sender_id}"
+    chat_closed = is_chat_closed(user_id, page_id)
     
-    if blocked_users.get(conv_key):
-        return jsonify({
-            "reply": "Thank you for chatting with us! This conversation is now closed.",
-            "close_chat": True
-        })
-
-    if conv_key not in conversations:
-        system_prompt = build_context(setup)
-        conversations[conv_key] = [{"role": "system", "content": system_prompt}]
-
-        if not user_message:
-            if model == "deepseek":
-                welcome_msg = generate_deepseek_reply(conversations[conv_key])
-            else:
-                welcome_msg = generate_deepseek_reply(conversations[conv_key])
-
-            # Check if it's a close_chat response (dict)
-            if isinstance(welcome_msg, dict) and welcome_msg.get("close_chat"):
-                blocked_users[conv_key] = True
-                conversations[conv_key].append({"role": "assistant", "content": welcome_msg["message"]})
-                save_conversations_to_file()
-                # Return the dict directly as JSON
-                return jsonify(welcome_msg)
-
-            if "<<JSON>>" in welcome_msg and "<<ENDJSON>>" in welcome_msg:
-                welcome_msg = re.sub(r"<<JSON>>.*?<<ENDJSON>>", "", welcome_msg, flags=re.DOTALL).strip()
-
-            conversations[conv_key].append({"role": "assistant", "content": welcome_msg})
-            save_conversations_to_file()
-            return jsonify({"reply": welcome_msg})
-
-    elif not user_message:
-        last_assistant_msg = next(
-            (msg for msg in reversed(conversations[conv_key]) if msg.get("role") == "assistant"),
-            None
-        )
-        
-        if last_assistant_msg:
-            content = last_assistant_msg.get("content", "")
-            if "<<JSON>>" in content and "<<ENDJSON>>" in content:
-                content = re.sub(r"<<JSON>>.*?<<ENDJSON>>", "", content, flags=re.DOTALL).strip()
-            return jsonify({"reply": content})
-        else:
-            return jsonify({"reply": ""})
-        
-    if user_message:
-        conversations[conv_key].append({"role": "user", "content": user_message})
-        save_conversations_to_file()
-
-        messages = conversations[conv_key].copy()
-
-        if model == "deepseek":
-            bot_reply = generate_deepseek_reply(messages)
-        else:
-            bot_reply = generate_chatgpt_reply(messages)
-
-        # Check if it's a close_chat response (dict)
-        if isinstance(bot_reply, dict) and bot_reply.get("close_chat"):
-            blocked_users[conv_key] = True
-            conversations[conv_key].append({"role": "assistant", "content": bot_reply["message"]})
-            save_conversations_to_file()
-            # Return the dict directly as JSON
-            return jsonify(bot_reply)
-
-        # Handle normal string response
-        conversations[conv_key].append({"role": "assistant", "content": bot_reply})
-        save_conversations_to_file()
-
-        confirmed = parse_booking_confirmation(bot_reply)
-        if confirmed:
-            confirmed["user_id"] = sender_id
-            confirmed["page_id"] = page_id
-            existing_lead = next(
-                (l for l in leads if l["user_id"] == sender_id and l["page_id"] == page_id), None
-            )
-            if existing_lead:
-                existing_lead.update(confirmed)
-            else:
-                leads.append(confirmed)
-            save_leads()
-
-        bot_reply_visible = re.sub(r"<<JSON>>.*?<<ENDJSON>>", "", bot_reply, flags=re.DOTALL).strip()
-        return jsonify({"reply": bot_reply_visible})
-
-    return jsonify({"reply": ""})
- 
+    return jsonify({
+        "messages": filtered_messages,
+        "has_history": len(filtered_messages) > 0,
+        "chat_closed": chat_closed 
+    })
 
 @bot_bp.route("/careerbot-stream", methods=["GET"])
 def chat_stream():
@@ -227,6 +140,10 @@ def chat_stream():
 
     if not all([user_id, page_id]):
         return jsonify({"error": "Missing required parameters"}), 400
+
+
+    if is_chat_closed(user_id, page_id):
+        return jsonify({"error": "Chat is closed"}), 400
 
     setup = page_to_setup_map.get(page_id)
     if not setup:
@@ -245,7 +162,6 @@ def chat_stream():
                 conversations[conv_key].append({"role": "user", "content": message})
                 save_conversations_to_file()
 
-            # Choose stream generator
             if model == "deepseek":
                 stream_generator = generate_deepseek_stream(conversations[conv_key])
             else:
@@ -311,25 +227,22 @@ def chat_stream():
                 chunk_str = str(chunk)
                 full_response += chunk_str
                 print(chunk_str, end="", flush=True)
-
-                # Check if this is a close_chat response (as string)
                 if "'close_chat': True" in chunk_str or '"close_chat": true' in chunk_str:
                     try:
-                        # Convert string representation to Python dict
                         import ast
                         chunk_dict = ast.literal_eval(chunk_str)
                         
                         if isinstance(chunk_dict, dict) and chunk_dict.get("close_chat"):
                             message_content = chunk_dict.get('message', '')
                             
-                            # Save only the message content to conversation
                             conversations[conv_key].append({
                                 "role": "assistant", 
-                                "content": message_content  # Only save the message, not the whole dict
+                                "content": message_content
                             })
                             save_conversations_to_file()
                             
-                            # Send proper JSON to frontend
+                            set_chat_closed(user_id, page_id, True)
+
                             close_data = {
                                 'content': message_content,
                                 'close_chat': True,
@@ -337,13 +250,10 @@ def chat_stream():
                             }
                             yield f"data: {json.dumps(close_data)}\n\n"
                             close_chat_triggered = True
-                            return  # stop streaming immediately
+                            return  
                             
                     except (SyntaxError, ValueError, Exception) as e:
-                        # Continue with normal text processing
                         pass
-
-                # Handle normal text chunks
                 visible_parts = json_filter.process_chunk(chunk_str)
                 for part in visible_parts:
                     if part.strip():
@@ -351,20 +261,18 @@ def chat_stream():
                         yield f"data: {json.dumps({'content': part})}\n\n"
 
             if not close_chat_triggered:
-                # After stream completes, check if full_response contains close_chat
                 if "'close_chat': True" in full_response or '"close_chat": true' in full_response:
                     try:
                         import re
-                        # Extract message content using regex
                         message_match = re.search(r"'message':\s*'([^']*)'", full_response)
                         if message_match:
                             message_content = message_match.group(1)
-                           
-                            # Save only the message content
+
                             conversations[conv_key].append({"role": "assistant", "content": message_content})
                             save_conversations_to_file()
                             
-                            # Send close_chat signal
+                            set_chat_closed(user_id, page_id, True)
+
                             close_data = {
                                 'content': message_content,
                                 'close_chat': True,
@@ -372,7 +280,6 @@ def chat_stream():
                             }
                             yield f"data: {json.dumps(close_data)}\n\n"
                         else:
-                            # Fallback: save full response
                             conversations[conv_key].append({"role": "assistant", "content": full_response})
                             save_conversations_to_file()
                     except Exception as e:
